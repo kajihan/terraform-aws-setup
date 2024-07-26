@@ -1,0 +1,62 @@
+name: Deploy Infrastructure
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v1
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: terraform init
+
+      - name: Terraform Apply
+        id: apply
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: terraform apply -auto-approve -var="db_name=${{ secrets.DB_NAME }}" -var="db_user=${{ secrets.DB_USER }}" -var="db_password=${{ secrets.DB_PASSWORD }}"
+
+      - name: Set environment variables
+        run: |
+          echo "RDS_ENDPOINT=$(terraform output -raw rds_endpoint | cut -d':' -f1)" >> $GITHUB_ENV
+          echo "DB_USER=$(terraform output -raw db_user)" >> $GITHUB_ENV
+          echo "DB_PASSWORD=$(terraform output -raw db_password)" >> $GITHUB_ENV
+          echo "DB_NAME=$(terraform output -raw db_name)" >> $GITHUB_ENV
+
+      - name: Install MySQL Client
+        run: sudo apt-get update && sudo apt-get install -y mariadb-client
+
+      - name: Initialize and restore RDS
+        run: |
+          echo "RDS_ENDPOINT=$RDS_ENDPOINT"
+          echo "DB_USER=$DB_USER"
+          echo "DB_PASSWORD=$DB_PASSWORD"
+          echo "DB_NAME=$DB_NAME"
+
+          DB_HOST=$(echo $RDS_ENDPOINT | cut -d':' -f1)
+          chmod +x init_db.sh
+          ./init_db.sh $DB_HOST $DB_USER $DB_PASSWORD $DB_NAME
+        env:
+          RDS_ENDPOINT: ${{ env.RDS_ENDPOINT }}
+          DB_USER: ${{ env.DB_USER }}
+          DB_PASSWORD: ${{ env.DB_PASSWORD }}
+          DB_NAME: ${{ env.DB_NAME }}
